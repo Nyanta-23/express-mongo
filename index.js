@@ -2,15 +2,16 @@ const express = require('express');
 const path = require('path');
 const mongoose = require('mongoose');
 const methodOverride = require('method-override');
+const session = require('express-session');
+const flash = require('connect-flash');
 
 const ErrorHandler = require('./ErrorHandler');
-
-
 
 const app = express();
 
 /* Models */
 const Product = require('./models/product');
+const Garment = require('./models/garment');
 const { log } = require('console');
 
 
@@ -28,8 +29,23 @@ mongoose.connect('mongodb://127.0.0.1/shop_db')
 
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
+
 app.use(express.urlencoded({ extended: true }));
 app.use(methodOverride('_method'));
+app.use(session({
+  secret: 'shhh',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: false,
+  }
+}))
+app.use(flash());
+
+app.use((req, res, next) => {
+  res.locals.flash_messages = req.flash('flash_messages');
+  next();
+});
 
 
 function wrapAsync(fn) {
@@ -42,6 +58,67 @@ function wrapAsync(fn) {
 app.get('/', (req, res) => {
   res.send('Hello World')
 });
+
+
+app.get('/garments', wrapAsync(async (req, res) => {
+  const garments = await Garment.find({});
+  res.render('garment/index', { garments });
+}));
+
+app.get('/garments/create', (req, res) => {
+  res.render('garment/create');
+});
+
+
+app.post('/garments', wrapAsync(async (req, res) => {
+  const garment = new Garment(req.body);
+  await garment.save();
+
+  req.flash('flash_messages', 'Berhasil menambahkan data pabrik!');
+  res.redirect(`/garments`);
+}));
+
+
+app.get('/garments/:id', wrapAsync(async (req, res) => {
+  const { id } = req.params;
+  const garment = await Garment.findById(id).populate('products');
+
+  res.render('garment/show', { garment });
+}));
+
+
+app.get('/garments/:garment_id/product/create', (req, res) => {
+  const { garment_id } = req.params;
+
+  res.render('products/create', { garment_id });
+});
+
+app.post('/garments/:garment_id/products', wrapAsync(async (req, res) => {
+  const { garment_id } = req.params;
+
+  const garment = await Garment.findById(garment_id);
+  const product = new Product(req.body);
+
+  garment.products.push(product);
+  product.garment = garment;
+
+  await garment.save();
+  await product.save();
+
+  res.redirect(`/garments/${garment_id}`);
+
+}));
+
+
+app.delete('/garments/:garment_id', wrapAsync(async (req, res) => {
+  const { garment_id } = req.params;
+
+  await Garment.findOneAndDelete(garment_id);
+
+  res.redirect('/garments');
+
+}));
+
 
 app.get('/products', async (req, res) => {
 
@@ -66,22 +143,20 @@ app.get('/products/create', (req, res) => {
 app.get('/products/:id', wrapAsync(async (req, res) => {
 
   const { id } = req.params;
-  const product = await Product.findById(id);
+  const product = await Product.findById(id).populate('garment');
 
   res.render('products/show', { product });
 
 }));
 
 
-app.post('/products', wrapAsync(async (req, res) => {
+// app.post('/products', wrapAsync(async (req, res) => {
 
-  const product = new Product(req.body);
-  await product.save();
+//   const product = new Product(req.body);
+//   await product.save();
 
-  res.redirect(`/products/${product._id}`);
-  return next(new ErrorHandler('Gagal Menambahkan', 405));
-
-}));
+//   res.redirect(`/products/${product._id}`);
+// }));
 
 app.get('/products/:id/edit', wrapAsync(async (req, res) => {
 
@@ -101,11 +176,11 @@ app.put('/products/:id', wrapAsync(async (req, res) => {
 }));
 
 
-app.delete('/products/:id', wrapAsync( async (req, res) => {
-    const { id } = req.params;
-    await Product.findByIdAndDelete(id);
+app.delete('/products/:id', wrapAsync(async (req, res) => {
+  const { id } = req.params;
+  await Product.findByIdAndDelete(id);
 
-    res.redirect('/products')
+  res.redirect('/products')
 }));
 
 
@@ -121,9 +196,9 @@ const validatorHandler = err => {
 app.use((err, req, res, next) => {
   console.dir(err);
 
-  if(err.name === 'ValidationError') err = validatorHandler(err);
+  if (err.name === 'ValidationError') err = validatorHandler(err);
 
-  if(err.name == 'CastError'){
+  if (err.name == 'CastError') {
     err.status = 404;
     err.message = 'Product not found';
   }
